@@ -1,6 +1,6 @@
 # BabaVPN
 
-Cyberpunk-styled Android VPN app with an embedded Tor backend and a full-device tunnel flow.
+Android VPN app with an embedded Tor backend and a full-device tunnel flow.
 
 ## Overview
 

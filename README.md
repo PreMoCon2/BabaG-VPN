@@ -81,10 +81,11 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Installing the APK
 
-1. Build the debug APK.
-2. Transfer `app-debug.apk` to an Android device.
-3. Allow installs from the source you are using.
-4. Open the app and approve the Android VPN permission prompt.
+1. Open the repository's `Releases` section on GitHub.
+2. Download the latest APK from the newest release.
+3. On Android, allow installs from your browser or file manager if prompted.
+4. Install the APK.
+5. Open BabaVPN and approve the Android VPN permission prompt.
 
 ## Notes for Developers
 

@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -19,6 +20,11 @@ class BabaVpnService : VpnService() {
     // takes over once Tor has exposed the local listener ports we need.
     private var torRuntimeManager: TorRuntimeManager? = null
     private var torVpnBridgeManager: TorVpnBridgeManager? = null
+    private var connectionMode: TorConnectionMode = TorConnectionMode.Direct
+    private var smartFallbackTriggered = false
+    private var connectStartedAtMs = 0L
+    private var lastBootstrapProgress: Int? = null
+    private var lastBootstrapUpdateAtMs = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -27,7 +33,12 @@ class BabaVpnService : VpnService() {
             context = this,
             listener = object : TorRuntimeListener {
                 override fun onBootstrap(progress: Int?, summary: String?) {
-                    BabaVpnController.onStartingTor(progress = progress, summary = summary)
+                    val adjustedSummary = maybeTriggerSmartFallback(progress, summary)
+                    BabaVpnController.onStartingTor(
+                        mode = connectionMode,
+                        progress = progress,
+                        summary = adjustedSummary
+                    )
                     updateNotification(
                         text = if (progress != null) {
                             "Bootstrapping Tor $progress%"
@@ -38,8 +49,18 @@ class BabaVpnService : VpnService() {
                 }
 
                 override fun onTorReady(ports: TorRuntimePorts) {
-                    BabaVpnController.onTorReady(ports)
-                    updateNotification("Tor ready. Establishing device tunnel")
+                    val route = torRuntimeManager?.activeRoute ?: TorConnectionRoute.Direct
+                    BabaVpnController.onTorReady(
+                        mode = connectionMode,
+                        route = route,
+                        ports = ports
+                    )
+                    updateNotification(
+                        when (route) {
+                            TorConnectionRoute.Direct -> "Tor ready. Establishing device tunnel"
+                            TorConnectionRoute.Snowflake -> "Snowflake route ready. Establishing device tunnel"
+                        }
+                    )
 
                     // We only establish the default-route VPN after Tor is fully ready.
                     // Doing this earlier would capture device traffic before the bridge
@@ -47,7 +68,12 @@ class BabaVpnService : VpnService() {
                     runCatching {
                         torVpnBridgeManager?.start(ports)
                     }.onSuccess {
-                        BabaVpnController.onTunnelConnected(ports, torVpnBridgeManager?.stats())
+                        BabaVpnController.onTunnelConnected(
+                            mode = connectionMode,
+                            route = route,
+                            ports = ports,
+                            stats = torVpnBridgeManager?.stats()
+                        )
                         updateNotification("Full-device Tor VPN connected")
                     }.onFailure { error ->
                         handleRuntimeError(error.message ?: "The Tor VPN bridge failed to start.")
@@ -63,7 +89,10 @@ class BabaVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> bootstrapVpnStack()
+            ACTION_START -> {
+                val mode = TorConnectionMode.fromWireValue(intent.getStringExtra(EXTRA_CONNECT_MODE))
+                bootstrapVpnStack(mode)
+            }
             ACTION_STOP -> stopVpnStack()
         }
 
@@ -78,11 +107,16 @@ class BabaVpnService : VpnService() {
         stopSelf()
     }
 
-    private fun bootstrapVpnStack() {
+    private fun bootstrapVpnStack(mode: TorConnectionMode) {
         try {
+            connectionMode = mode
+            smartFallbackTriggered = false
+            connectStartedAtMs = SystemClock.elapsedRealtime()
+            lastBootstrapProgress = null
+            lastBootstrapUpdateAtMs = connectStartedAtMs
             startForegroundIfNeeded("Starting Tor core")
-            BabaVpnController.onStartingTor()
-            torRuntimeManager?.start()
+            BabaVpnController.onStartingTor(mode = mode)
+            torRuntimeManager?.start(mode)
         } catch (error: Throwable) {
             handleRuntimeError(error.message ?: "VPN bootstrap failed.")
         }
@@ -109,6 +143,37 @@ class BabaVpnService : VpnService() {
         torRuntimeManager?.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun maybeTriggerSmartFallback(progress: Int?, summary: String?): String? {
+        if (connectionMode != TorConnectionMode.Smart) {
+            return summary
+        }
+
+        if (torRuntimeManager?.activeRoute != TorConnectionRoute.Direct) {
+            return summary
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val previousProgress = lastBootstrapProgress
+
+        if (progress != null && (previousProgress == null || progress > previousProgress)) {
+            lastBootstrapProgress = progress
+            lastBootstrapUpdateAtMs = now
+            return summary
+        }
+
+        val stalledForMs = now - lastBootstrapUpdateAtMs
+        if (!smartFallbackTriggered && stalledForMs >= SMART_DIRECT_TIMEOUT_MS) {
+            smartFallbackTriggered = true
+            lastBootstrapProgress = null
+            lastBootstrapUpdateAtMs = now
+            torRuntimeManager?.switchToSnowflake()
+            updateNotification("Smart Connect is switching to a Snowflake bridge")
+            return "Direct path looks blocked. Smart Connect is switching to a Snowflake bridge."
+        }
+
+        return summary
     }
 
     private fun startForegroundIfNeeded(text: String) {
@@ -173,11 +238,15 @@ class BabaVpnService : VpnService() {
     companion object {
         private const val ACTION_START = "com.example.babavpn.action.START_VPN"
         private const val ACTION_STOP = "com.example.babavpn.action.STOP_VPN"
+        private const val EXTRA_CONNECT_MODE = "com.example.babavpn.extra.CONNECT_MODE"
         private const val NOTIFICATION_CHANNEL_ID = "baba_vpn_runtime"
         private const val NOTIFICATION_ID = 1001
+        private const val SMART_DIRECT_TIMEOUT_MS = 15_000L
 
-        fun start(context: Context) {
-            val intent = Intent(context, BabaVpnService::class.java).setAction(ACTION_START)
+        fun start(context: Context, mode: TorConnectionMode) {
+            val intent = Intent(context, BabaVpnService::class.java)
+                .setAction(ACTION_START)
+                .putExtra(EXTRA_CONNECT_MODE, mode.wireValue)
             ContextCompat.startForegroundService(context, intent)
         }
 

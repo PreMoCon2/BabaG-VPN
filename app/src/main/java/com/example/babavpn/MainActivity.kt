@@ -30,14 +30,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +68,7 @@ import com.example.babavpn.ui.theme.CyberPanelBorder
 import com.example.babavpn.ui.theme.CyberTextMuted
 import com.example.babavpn.ui.theme.CyberTextPrimary
 import com.example.babavpn.vpn.BabaVpnController
+import com.example.babavpn.vpn.TorConnectionMode
 import com.example.babavpn.vpn.BabaVpnService
 import com.example.babavpn.vpn.VpnTunnelStage
 import com.example.babavpn.vpn.VpnTunnelUiState
@@ -87,6 +94,9 @@ class MainActivity : ComponentActivity() {
 fun BabaVpnApp(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val vpnState by BabaVpnController.uiState.collectAsState()
+    var showConnectChooser by remember { mutableStateOf(false) }
+    var selectedConnectionMode by remember { mutableStateOf(TorConnectionMode.Smart) }
+    var pendingConnectionMode by remember { mutableStateOf(TorConnectionMode.Smart) }
     val accentColor by animateColorAsState(
         targetValue = vpnState.stage.accentColor(),
         label = "accentColor"
@@ -117,7 +127,7 @@ fun BabaVpnApp(modifier: Modifier = Modifier) {
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            BabaVpnService.start(context)
+            BabaVpnService.start(context, pendingConnectionMode)
         } else {
             BabaVpnController.onPermissionDenied()
         }
@@ -129,8 +139,9 @@ fun BabaVpnApp(modifier: Modifier = Modifier) {
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF04030A),
-                        Color(0xFF0A1023),
+                        Color(0xFF05020B),
+                        Color(0xFF14091E),
+                        Color(0xFF08040E),
                         CyberBlack
                     )
                 )
@@ -164,13 +175,7 @@ fun BabaVpnApp(modifier: Modifier = Modifier) {
                             VpnTunnelStage.Offline,
                             VpnTunnelStage.PermissionDenied,
                             VpnTunnelStage.Error -> {
-                                val permissionIntent = VpnService.prepare(context)
-                                if (permissionIntent != null) {
-                                    BabaVpnController.onPermissionRequested()
-                                    permissionLauncher.launch(permissionIntent)
-                                } else {
-                                    BabaVpnService.start(context)
-                                }
+                                showConnectChooser = true
                             }
 
                             VpnTunnelStage.RequestingPermission,
@@ -192,6 +197,25 @@ fun BabaVpnApp(modifier: Modifier = Modifier) {
             }
 
             ConnectionStats(vpnState = vpnState, accentColor = accentColor)
+        }
+
+        if (showConnectChooser) {
+            ConnectModeDialog(
+                selectedMode = selectedConnectionMode,
+                onModeSelected = { selectedConnectionMode = it },
+                onDismiss = { showConnectChooser = false },
+                onConnect = {
+                    showConnectChooser = false
+                    pendingConnectionMode = selectedConnectionMode
+                    val permissionIntent = VpnService.prepare(context)
+                    if (permissionIntent != null) {
+                        BabaVpnController.onPermissionRequested(selectedConnectionMode)
+                        permissionLauncher.launch(permissionIntent)
+                    } else {
+                        BabaVpnService.start(context, selectedConnectionMode)
+                    }
+                }
+            )
         }
     }
 }
@@ -223,7 +247,7 @@ private fun Header(
             Text(
                 text = "FULL DEVICE TOR STACK",
                 style = MaterialTheme.typography.labelLarge,
-                color = CyberCyan
+                color = CyberBlue
             )
         }
 
@@ -237,6 +261,98 @@ private fun Header(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.labelMedium,
                 color = accentColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectModeDialog(
+    selectedMode: TorConnectionMode,
+    onModeSelected: (TorConnectionMode) -> Unit,
+    onDismiss: () -> Unit,
+    onConnect: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            Button(onClick = onConnect) {
+                Text(text = "Connect")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(text = "Cancel")
+            }
+        },
+        title = {
+            Text(
+                text = "Choose How To Connect",
+                color = CyberTextPrimary
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Pick the Tor route you want BabaVPN to use for this session.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CyberTextMuted
+                )
+
+                ConnectModeOption(
+                    mode = TorConnectionMode.Direct,
+                    selected = selectedMode == TorConnectionMode.Direct,
+                    onClick = { onModeSelected(TorConnectionMode.Direct) }
+                )
+
+                ConnectModeOption(
+                    mode = TorConnectionMode.Smart,
+                    selected = selectedMode == TorConnectionMode.Smart,
+                    onClick = { onModeSelected(TorConnectionMode.Smart) }
+                )
+
+                Text(
+                    text = selectedMode.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selectedMode == TorConnectionMode.Smart) CyberBlue else CyberTextMuted
+                )
+            }
+        },
+        containerColor = Color(0xFF121020),
+        tonalElevation = 0.dp
+    )
+}
+
+@Composable
+private fun ConnectModeOption(
+    mode: TorConnectionMode,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) CyberPanel.copy(alpha = 0.96f) else CyberPanel.copy(alpha = 0.72f)
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (selected) CyberMagenta else CyberPanelBorder
+        ),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = mode.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = CyberTextPrimary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = mode.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = CyberTextMuted
             )
         }
     }
@@ -338,7 +454,7 @@ private fun ConnectionStats(
             StatusCard(
                 title = "Shield",
                 value = vpnState.shieldLabel,
-                accentColor = CyberCyan,
+                accentColor = CyberBlue,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -406,7 +522,7 @@ private fun StatusCard(
 @Composable
 private fun CyberpunkBackdrop() {
     Canvas(modifier = Modifier.fillMaxSize()) {
-        val gridColor = CyberCyan.copy(alpha = 0.08f)
+        val gridColor = CyberMagenta.copy(alpha = 0.08f)
         val verticalStep = size.width / 7f
         val horizontalStep = size.height / 12f
 
@@ -438,12 +554,12 @@ private fun CyberpunkBackdrop() {
             center = Offset(size.width * 0.78f, size.height * 0.18f)
         )
         drawCircle(
-            color = CyberBlue.copy(alpha = 0.16f),
+            color = CyberBlue.copy(alpha = 0.18f),
             radius = size.minDimension * 0.45f,
             center = Offset(size.width * 0.12f, size.height * 0.82f)
         )
         drawCircle(
-            color = CyberCyan.copy(alpha = 0.6f),
+            color = CyberCyan.copy(alpha = 0.56f),
             radius = size.minDimension * 0.16f,
             center = center,
             style = Stroke(width = 3f)
@@ -456,7 +572,7 @@ private fun VpnTunnelStage.accentColor(): Color = when (this) {
     VpnTunnelStage.RequestingPermission -> CyberMagenta
     VpnTunnelStage.StartingTor -> CyberBlue
     VpnTunnelStage.TorReady -> CyberCyan
-    VpnTunnelStage.Connected -> CyberGreen
+    VpnTunnelStage.Connected -> CyberMagenta
     VpnTunnelStage.PermissionDenied -> CyberMagenta
     VpnTunnelStage.Error -> Color(0xFFFF6B6B)
 }

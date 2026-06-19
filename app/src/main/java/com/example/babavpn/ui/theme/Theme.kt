@@ -14,17 +14,17 @@ private val DarkColorScheme = darkColorScheme(
     surface = CyberPanel,
     onPrimary = CyberBlack,
     onSecondary = CyberTextPrimary,
-    onTertiary = CyberBlack,
+    onTertiary = CyberTextPrimary,
     onBackground = CyberTextPrimary,
     onSurface = CyberTextPrimary
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = CyberBlue,
+    primary = CyberMagenta,
     secondary = CyberMagenta,
     tertiary = CyberGreen,
-    background = Color(0xFFF6FBFF),
-    surface = Color(0xFFEAF1FF),
+    background = Color(0xFFF8F3FF),
+    surface = Color(0xFFF0E6FB),
     onPrimary = CyberTextPrimary,
     onSecondary = CyberTextPrimary,
     onTertiary = CyberBlack,

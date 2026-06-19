@@ -32,14 +32,14 @@ object BabaVpnController {
     private val _uiState = MutableStateFlow(offlineState())
     val uiState: StateFlow<VpnTunnelUiState> = _uiState.asStateFlow()
 
-    fun onPermissionRequested() {
+    fun onPermissionRequested(mode: TorConnectionMode) {
         _uiState.value = VpnTunnelUiState(
             stage = VpnTunnelStage.RequestingPermission,
-            badgeLabel = "GRANT VPN",
+            badgeLabel = if (mode == TorConnectionMode.Smart) "SMART VPN" else "GRANT VPN",
             buttonTopLine = "ALLOW",
             buttonMainLine = "VPN",
-            buttonBottomLine = "ANDROID SYSTEM PROMPT",
-            statusLine = "Approve the Android VPN dialog so Baba VPN can control device-wide traffic.",
+            buttonBottomLine = mode.title.uppercase(),
+            statusLine = "Approve the Android VPN dialog so Baba VPN can control device-wide traffic using ${mode.title}.",
             activityLine = "Android consent dialog is waiting",
             detailLine = "This is the first real system-level step for a full-device tunnel. Until Android grants control, the app cannot create or manage a VPN interface.",
             circuitLabel = "AUTH",
@@ -47,24 +47,40 @@ object BabaVpnController {
         )
     }
 
-    fun onStartingTor(progress: Int? = null, summary: String? = null) {
+    fun onStartingTor(
+        mode: TorConnectionMode,
+        progress: Int? = null,
+        summary: String? = null
+    ) {
         val progressLabel = progress?.let { "$it%" } ?: "..."
         val summaryLine = summary ?: "Negotiating the Tor network path"
         _uiState.value = VpnTunnelUiState(
             stage = VpnTunnelStage.StartingTor,
-            badgeLabel = "TOR BOOT",
+            badgeLabel = if (mode == TorConnectionMode.Smart) "SMART TOR" else "TOR BOOT",
             buttonTopLine = "STARTING",
             buttonMainLine = "TOR",
-            buttonBottomLine = "FULL DEVICE CORE",
-            statusLine = "VPN permission granted. Baba VPN is booting a real embedded Tor backend.",
+            buttonBottomLine = mode.title.uppercase(),
+            statusLine = if (mode == TorConnectionMode.Smart) {
+                "VPN permission granted. Smart Connect is trying the best Tor path for this network."
+            } else {
+                "VPN permission granted. Baba VPN is booting a direct Tor connection."
+            },
             activityLine = "Bootstrap $progressLabel - $summaryLine",
-            detailLine = "This is now beyond UI: the app is waiting for Tor to create live local listener ports before the device-wide packet bridge is allowed to come online.",
+            detailLine = if (mode == TorConnectionMode.Smart) {
+                "Smart Connect starts with a normal Tor path and can promote itself to a Snowflake bridge if the direct route stalls."
+            } else {
+                "This is now beyond UI: the app is waiting for Tor to create live local listener ports before the device-wide packet bridge is allowed to come online."
+            },
             circuitLabel = progressLabel,
-            shieldLabel = "TOR"
+            shieldLabel = if (mode == TorConnectionMode.Smart) "SMART" else "TOR"
         )
     }
 
-    fun onTorReady(ports: TorRuntimePorts) {
+    fun onTorReady(
+        mode: TorConnectionMode,
+        route: TorConnectionRoute,
+        ports: TorRuntimePorts
+    ) {
         // TorReady means the backend is live, but the Android TUN handoff is
         // still in progress. Connected is the state after the bridge is active.
         _uiState.value = VpnTunnelUiState(
@@ -72,16 +88,31 @@ object BabaVpnController {
             badgeLabel = "LINKING",
             buttonTopLine = "ARMING",
             buttonMainLine = "TUN",
-            buttonBottomLine = "TOR BRIDGE",
-            statusLine = "Embedded Tor is online. Baba VPN is now creating the Android tunnel and attaching the native Tor packet bridge.",
+            buttonBottomLine = route.label,
+            statusLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
+                "Smart Connect found a working Snowflake bridge. Baba VPN is now creating the Android tunnel."
+            } else {
+                "Embedded Tor is online. Baba VPN is now creating the Android tunnel and attaching the native Tor packet bridge."
+            },
             activityLine = "SOCKS ${ports.socksPort}  HTTP ${ports.httpPort}  DNS ${ports.dnsPort}",
-            detailLine = "This handoff is where Android gives Baba VPN the device-wide interface and the native tunnel process begins forwarding those packets into Tor instead of out to the normal network.",
+            detailLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Direct) {
+                "Smart Connect kept the fast direct Tor path because the network looked healthy enough."
+            } else if (mode == TorConnectionMode.Smart) {
+                "Smart Connect switched away from the direct route and is finishing the tunnel over Snowflake."
+            } else {
+                "This handoff is where Android gives Baba VPN the device-wide interface and the native tunnel process begins forwarding those packets into Tor instead of out to the normal network."
+            },
             circuitLabel = "SOCKS ${ports.socksPort}",
-            shieldLabel = "LINK"
+            shieldLabel = route.label
         )
     }
 
-    fun onTunnelConnected(ports: TorRuntimePorts, stats: LongArray?) {
+    fun onTunnelConnected(
+        mode: TorConnectionMode,
+        route: TorConnectionRoute,
+        ports: TorRuntimePorts,
+        stats: LongArray?
+    ) {
         val statsLine = if (stats != null && stats.size >= 4) {
             "TX ${stats[1]}B  RX ${stats[3]}B  DNS ${ports.dnsPort}"
         } else {
@@ -93,12 +124,22 @@ object BabaVpnController {
             badgeLabel = "TOR LIVE",
             buttonTopLine = "STOP",
             buttonMainLine = "TOR",
-            buttonBottomLine = "DEVICE ROUTED",
-            statusLine = "Full-device Tor VPN is online. New app traffic should now leave through the Tor network instead of your normal IP.",
+            buttonBottomLine = route.label,
+            statusLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
+                "Smart Connect is online through a Snowflake bridge. New app traffic should now leave through Tor instead of your normal IP."
+            } else if (mode == TorConnectionMode.Smart) {
+                "Smart Connect is online on a direct Tor path. New app traffic should now leave through Tor instead of your normal IP."
+            } else {
+                "Full-device Tor VPN is online. New app traffic should now leave through the Tor network instead of your normal IP."
+            },
             activityLine = statsLine,
-            detailLine = "Test it in Chrome with 'what's my IP'. You should see a Tor exit IP, not your home or carrier address. Some apps that depend on raw UDP may still misbehave because Tor is fundamentally TCP-based.",
+            detailLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
+                "This route is slower but more censorship-resistant. Test it in Chrome with 'what's my IP' to confirm you're seeing a Tor exit IP."
+            } else {
+                "Test it in Chrome with 'what's my IP'. You should see a Tor exit IP, not your home or carrier address. Some apps that depend on raw UDP may still misbehave because Tor is fundamentally TCP-based."
+            },
             circuitLabel = "SOCKS ${ports.socksPort}",
-            shieldLabel = "LIVE"
+            shieldLabel = route.label
         )
     }
 

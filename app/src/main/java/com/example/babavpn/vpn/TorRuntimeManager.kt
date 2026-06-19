@@ -32,12 +32,18 @@ class TorRuntimeManager(
     // Binder and control-port work stay off the main thread so the VPN service
     // can keep updating the UI and foreground notification without blocking.
     private val executor = Executors.newSingleThreadExecutor()
+    private val transportManager = TorPluggableTransportManager(context)
     private var torServiceConnection: ServiceConnection? = null
     @Volatile
     private var isRunning = false
+    @Volatile
+    private var activeSessionId = 0
     private var controlConnection: TorControlConnection? = null
+    @Volatile
+    var activeRoute: TorConnectionRoute = TorConnectionRoute.Direct
+        private set
 
-    fun start() {
+    fun start(mode: TorConnectionMode = TorConnectionMode.Direct) {
         if (isRunning) {
             return
         }
@@ -45,11 +51,41 @@ class TorRuntimeManager(
         isRunning = true
 
         try {
-            installTorConfig()
-            bindTorService()
+            executor.execute {
+                try {
+                    startProfile(
+                        route = TorConnectionRoute.Direct,
+                        mode = mode
+                    )
+                } catch (error: Throwable) {
+                    isRunning = false
+                    listener.onTorError(error.message ?: "Unable to start the Tor runtime.")
+                }
+            }
         } catch (error: Throwable) {
             isRunning = false
             listener.onTorError(error.message ?: "Unable to start the Tor runtime.")
+        }
+    }
+
+    fun switchToSnowflake() {
+        if (!isRunning || activeRoute == TorConnectionRoute.Snowflake) {
+            return
+        }
+
+        executor.execute {
+            try {
+                shutdownCurrentProfile()
+                Thread.sleep(750)
+                startProfile(
+                    route = TorConnectionRoute.Snowflake,
+                    mode = TorConnectionMode.Smart
+                )
+            } catch (error: Throwable) {
+                if (isRunning) {
+                    listener.onTorError(error.message ?: "Unable to switch to a Snowflake bridge.")
+                }
+            }
         }
     }
 
@@ -59,24 +95,38 @@ class TorRuntimeManager(
         }
 
         isRunning = false
+        activeSessionId += 1
 
-        try {
-            controlConnection?.shutdownTor(TorControlCommands.SIGNAL_SHUTDOWN)
-        } catch (_: Throwable) {
-        }
-
-        controlConnection = null
-
-        torServiceConnection?.let {
-            try {
-                context.unbindService(it)
-            } catch (_: Throwable) {
-            }
-        }
-        torServiceConnection = null
+        shutdownCurrentProfile()
+        transportManager.stopAll()
     }
 
-    private fun bindTorService() {
+    private fun startProfile(
+        route: TorConnectionRoute,
+        mode: TorConnectionMode
+    ) {
+        activeRoute = route
+        activeSessionId += 1
+        val sessionId = activeSessionId
+
+        val snowflakeConfig = when (route) {
+            TorConnectionRoute.Direct -> {
+                transportManager.stopAll()
+                null
+            }
+
+            TorConnectionRoute.Snowflake -> transportManager.startSnowflake()
+        }
+
+        installTorConfig(
+            mode = mode,
+            route = route,
+            snowflakeConfig = snowflakeConfig
+        )
+        bindTorService(sessionId)
+    }
+
+    private fun bindTorService(sessionId: Int) {
         // TorService comes from the tor-android dependency and owns the actual
         // Tor process plus the control connection we query later.
         val connection = object : ServiceConnection {
@@ -86,9 +136,9 @@ class TorRuntimeManager(
                         val binder = service as? TorService.LocalBinder
                             ?: throw IllegalStateException("Tor binder was not available.")
                         val torService = binder.service
-                        waitForControlConnection(torService)
+                        waitForControlConnection(torService, sessionId)
                     } catch (error: Throwable) {
-                        if (isRunning) {
+                        if (isRunning && sessionId == activeSessionId) {
                             listener.onTorError(error.message ?: "Tor service binding failed.")
                         }
                     }
@@ -96,13 +146,13 @@ class TorRuntimeManager(
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
-                if (isRunning) {
+                if (isRunning && sessionId == activeSessionId) {
                     listener.onTorError("Tor service disconnected unexpectedly.")
                 }
             }
 
             override fun onBindingDied(name: ComponentName?) {
-                if (isRunning) {
+                if (isRunning && sessionId == activeSessionId) {
                     listener.onTorError("Tor service binding died.")
                 }
             }
@@ -129,29 +179,31 @@ class TorRuntimeManager(
         }
     }
 
-    private fun waitForControlConnection(torService: TorService) {
+    private fun waitForControlConnection(torService: TorService, sessionId: Int) {
         // The Tor process starts before its control socket is ready, so we poll
         // briefly until the control connection becomes available.
         repeat(120) {
-            if (!isRunning) {
+            if (!isRunning || sessionId != activeSessionId) {
                 return
             }
 
             val connection = torService.torControlConnection
             if (connection != null) {
                 controlConnection = connection
-                monitorBootstrap(connection)
+                monitorBootstrap(connection, sessionId)
                 return
             }
 
             Thread.sleep(500)
         }
 
-        listener.onTorError("Tor control connection did not come online in time.")
+        if (isRunning && sessionId == activeSessionId) {
+            listener.onTorError("Tor control connection did not come online in time.")
+        }
     }
 
-    private fun monitorBootstrap(connection: TorControlConnection) {
-        while (isRunning) {
+    private fun monitorBootstrap(connection: TorControlConnection, sessionId: Int) {
+        while (isRunning && sessionId == activeSessionId) {
             val bootstrapStatus = runCatching {
                 connection.getInfo("status/bootstrap-phase")
             }.getOrNull()
@@ -200,7 +252,11 @@ class TorRuntimeManager(
         return if (match.find()) match.group(1) else null
     }
 
-    private fun installTorConfig() {
+    private fun installTorConfig(
+        mode: TorConnectionMode,
+        route: TorConnectionRoute,
+        snowflakeConfig: SnowflakeTransportConfig?
+    ) {
         // The defaults torrc keeps transparent listeners disabled until our
         // runtime config is written, so the service does not expose stale ports
         // during startup.
@@ -213,31 +269,73 @@ class TorRuntimeManager(
             """.trimIndent()
         )
 
+        val torrcLines = mutableListOf(
+            "RunAsDaemon 1",
+            "AvoidDiskWrites 1",
+            "SOCKSPort auto",
+            "HTTPTunnelPort auto",
+            "DNSPort auto",
+            "TransPort auto",
+            "SafeSocks 0",
+            "TestSocks 0",
+            "VirtualAddrNetwork 10.192.0.0/10",
+            "AutomapHostsOnResolve 1",
+            "DormantClientTimeout 10 minutes",
+            "DormantCanceledByStartup 1",
+            "DisableNetwork 0"
+        )
+
+        when (route) {
+            TorConnectionRoute.Direct -> {
+                torrcLines.add(0, "UseBridges 0")
+            }
+
+            TorConnectionRoute.Snowflake -> {
+                val config = snowflakeConfig
+                    ?: throw IllegalStateException("Snowflake profile requested without transport config.")
+                torrcLines.add(0, "UseBridges 1")
+                torrcLines.add(
+                    1,
+                    "ClientTransportPlugin snowflake socks5 127.0.0.1:${config.socksPort}"
+                )
+                config.bridgeLines.forEach { bridgeLine ->
+                    torrcLines.add("Bridge $bridgeLine")
+                }
+            }
+        }
+
         writeFile(
             TorService.getTorrc(context),
-            """
-            # Auto ports let Tor pick open localhost listeners that we discover
-            # over the control connection before handing them to the VPN bridge.
-            RunAsDaemon 1
-            AvoidDiskWrites 1
-            SOCKSPort auto
-            HTTPTunnelPort auto
-            DNSPort auto
-            TransPort auto
-            SafeSocks 0
-            TestSocks 0
-            VirtualAddrNetwork 10.192.0.0/10
-            AutomapHostsOnResolve 1
-            DormantClientTimeout 10 minutes
-            DormantCanceledByStartup 1
-            DisableNetwork 0
-            """.trimIndent()
+            buildString {
+                if (mode == TorConnectionMode.Smart) {
+                    appendLine("# Smart Connect starts direct and can reconfigure into Snowflake if needed.")
+                }
+                appendLine("# Auto ports let Tor pick open localhost listeners that we discover over the control connection before handing them to the VPN bridge.")
+                torrcLines.forEach(::appendLine)
+            }.trim()
         )
     }
 
     private fun writeFile(file: File, content: String) {
         file.parentFile?.mkdirs()
         file.writeText("$content\n")
+    }
+
+    private fun shutdownCurrentProfile() {
+        try {
+            controlConnection?.shutdownTor(TorControlCommands.SIGNAL_SHUTDOWN)
+        } catch (_: Throwable) {
+        }
+
+        controlConnection = null
+
+        torServiceConnection?.let {
+            try {
+                context.unbindService(it)
+            } catch (_: Throwable) {
+            }
+        }
+        torServiceConnection = null
     }
 
     private companion object {

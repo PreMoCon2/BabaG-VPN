@@ -10,6 +10,7 @@ activityCompose = "1.8.2"
 composeBom = "2024.04.01"
 guardianJtorctl = "0.4.5.7"
 torAndroid = "0.4.8.22"
+iptproxy = "5.5.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,6 +29,7 @@ androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 guardian-jtorctl = { group = "info.guardianproject", name = "jtorctl", version.ref = "guardianJtorctl" }
 guardian-tor-android = { group = "info.guardianproject", name = "tor-android", version.ref = "torAndroid" }
+iptproxy = { group = "com.netzarchitekten", name = "IPtProxy", version.ref = "iptproxy" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -66,6 +66,7 @@ dependencies {
     implementation(libs.guardian.tor.android) {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
     }
+    implementation(libs.iptproxy)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -1,5 +1,9 @@
 # BabaG VPN
 
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/baba_launcher.png" alt="BabaG VPN logo" width="160" />
+</p>
+
 Android VPN app with an embedded Tor backend and a full-device tunnel flow.
 
 ## Overview

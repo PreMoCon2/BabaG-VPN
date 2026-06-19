@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BabaVPN"
+rootProject.name = "BabaG VPN"
 include(":app")

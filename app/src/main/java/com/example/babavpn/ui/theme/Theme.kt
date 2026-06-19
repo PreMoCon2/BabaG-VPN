@@ -33,7 +33,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun BabaVPNTheme(
+fun BabaGVPNTheme(
     darkTheme: Boolean = true,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit

@@ -1,10 +1,10 @@
-# BabaVPN
+# BabaG VPN
 
 Android VPN app with an embedded Tor backend and a full-device tunnel flow.
 
 ## Overview
 
-BabaVPN is an Android app that experiments with routing device traffic through an embedded Tor stack while presenting a bold neon UI inspired by cyberpunk dashboards. The project combines a Jetpack Compose interface, Android's `VpnService`, Guardian Project's Tor Android runtime, and a bundled native tunnel bridge.
+BabaG VPN is an Android app that experiments with routing device traffic through an embedded Tor stack while presenting a bold neon UI inspired by cyberpunk dashboards. The project combines a Jetpack Compose interface, Android's `VpnService`, Guardian Project's Tor Android runtime, and a bundled native tunnel bridge.
 
 This repository is currently best described as an experimental prototype. The core pieces are in place, but it should still be treated as a developer-focused build rather than a production-ready privacy product.
 
@@ -38,7 +38,7 @@ This repository is currently best described as an experimental prototype. The co
 ## Project Structure
 
 ```text
-app/src/main/java/com/example/babavpn/
+app/src/main/java/
   MainActivity.kt                  # Compose UI and VPN permission flow
   vpn/
     BabaVpnController.kt           # UI state model for tunnel lifecycle
@@ -85,7 +85,7 @@ app/build/outputs/apk/debug/app-debug.apk
 2. Download the latest APK from the newest release.
 3. On Android, allow installs from your browser or file manager if prompted.
 4. Install the APK.
-5. Open BabaVPN and approve the Android VPN permission prompt.
+5. Open BabaG VPN and approve the Android VPN permission prompt.
 
 ## Notes for Developers
 
@@ -104,6 +104,6 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Disclaimer
 
-BabaVPN is an experimental project and should not be treated as a guarantee of anonymity, security, or censorship resistance. Review the code, test carefully, and validate the networking behavior before relying on it for sensitive use cases.
+BabaG VPN is an experimental project and should not be treated as a guarantee of anonymity, security, or censorship resistance. Review the code, test carefully, and validate the networking behavior before relying on it for sensitive use cases.
 
 This project is not affiliated with the Tor Project or Guardian Project.

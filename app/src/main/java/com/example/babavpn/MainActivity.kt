@@ -57,7 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.babavpn.ui.theme.BabaVPNTheme
+import com.example.babavpn.ui.theme.BabaGVPNTheme
 import com.example.babavpn.ui.theme.CyberBlack
 import com.example.babavpn.ui.theme.CyberBlue
 import com.example.babavpn.ui.theme.CyberCyan
@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            BabaVPNTheme(darkTheme = true, dynamicColor = false) {
+            BabaGVPNTheme(darkTheme = true, dynamicColor = false) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -223,7 +223,7 @@ fun BabaVpnApp(modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 @Composable
 fun BabaVpnAppPreview() {
-    BabaVPNTheme(darkTheme = true, dynamicColor = false) {
+    BabaGVPNTheme(darkTheme = true, dynamicColor = false) {
         BabaVpnApp()
     }
 }
@@ -240,7 +240,7 @@ private fun Header(
     ) {
         Column {
             Text(
-                text = "BABA VPN",
+                text = "BABAG VPN",
                 style = MaterialTheme.typography.headlineMedium,
                 color = CyberTextPrimary
             )
@@ -294,7 +294,7 @@ private fun ConnectModeDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Pick the Tor route you want BabaVPN to use for this session.",
+                    text = "Pick the Tor route you want BabaG VPN to use for this session.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = CyberTextMuted
                 )
@@ -454,6 +454,7 @@ private fun ConnectionStats(
             StatusCard(
                 title = "Shield",
                 value = vpnState.shieldLabel,
+                secondaryValue = vpnState.shieldRouteHint(),
                 accentColor = CyberBlue,
                 modifier = Modifier.weight(1f)
             )
@@ -494,6 +495,7 @@ private fun ConnectionStats(
 private fun StatusCard(
     title: String,
     value: String,
+    secondaryValue: String? = null,
     accentColor: Color,
     modifier: Modifier = Modifier
 ) {
@@ -515,6 +517,14 @@ private fun StatusCard(
                 style = MaterialTheme.typography.headlineSmall,
                 color = accentColor
             )
+            if (secondaryValue != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = secondaryValue,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CyberTextMuted
+                )
+            }
         }
     }
 }
@@ -575,4 +585,20 @@ private fun VpnTunnelStage.accentColor(): Color = when (this) {
     VpnTunnelStage.Connected -> CyberMagenta
     VpnTunnelStage.PermissionDenied -> CyberMagenta
     VpnTunnelStage.Error -> Color(0xFFFF6B6B)
+}
+
+private fun VpnTunnelUiState.shieldRouteHint(): String? {
+    if (
+        stage == VpnTunnelStage.Offline ||
+        stage == VpnTunnelStage.PermissionDenied ||
+        stage == VpnTunnelStage.Error
+    ) {
+        return null
+    }
+
+    return if (routeLabel != shieldLabel) {
+        "PATH $routeLabel"
+    } else {
+        null
+    }
 }

@@ -54,7 +54,7 @@ class TorRuntimeManager(
             executor.execute {
                 try {
                     startProfile(
-                        route = TorConnectionRoute.Direct,
+                        route = initialRouteFor(mode),
                         mode = mode
                     )
                 } catch (error: Throwable) {
@@ -336,6 +336,12 @@ class TorRuntimeManager(
             }
         }
         torServiceConnection = null
+    }
+
+    private fun initialRouteFor(mode: TorConnectionMode): TorConnectionRoute = when (mode) {
+        TorConnectionMode.Direct,
+        TorConnectionMode.Smart -> TorConnectionRoute.Direct
+        TorConnectionMode.Snowflake -> TorConnectionRoute.Snowflake
     }
 
     private companion object {

@@ -36,13 +36,17 @@ object BabaVpnController {
     fun onPermissionRequested(mode: TorConnectionMode) {
         _uiState.value = VpnTunnelUiState(
             stage = VpnTunnelStage.RequestingPermission,
-            badgeLabel = if (mode == TorConnectionMode.Smart) "SMART VPN" else "GRANT VPN",
+            badgeLabel = when (mode) {
+                TorConnectionMode.Smart -> "SMART VPN"
+                TorConnectionMode.Snowflake -> "SNOW VPN"
+                TorConnectionMode.Direct -> "GRANT VPN"
+            },
             buttonTopLine = "ALLOW",
             buttonMainLine = "VPN",
             buttonBottomLine = mode.title.uppercase(),
-            statusLine = "Approve the Android VPN dialog so BabaG VPN can control device-wide traffic using ${mode.title}.",
-            activityLine = "Android consent dialog is waiting",
-            detailLine = "This is the first real system-level step for a full-device tunnel. Until Android grants control, the app cannot create or manage a VPN interface.",
+            statusLine = "Approve the Android VPN dialog to start ${mode.title} mode.",
+            activityLine = "VPN permission pending",
+            detailLine = "Android must grant VPN control before BabaG VPN can route traffic.",
             circuitLabel = "AUTH",
             shieldLabel = mode.shieldLabel(),
             routeLabel = "PENDING"
@@ -58,24 +62,38 @@ object BabaVpnController {
         val summaryLine = summary ?: "Negotiating the Tor network path"
         _uiState.value = VpnTunnelUiState(
             stage = VpnTunnelStage.StartingTor,
-            badgeLabel = if (mode == TorConnectionMode.Smart) "SMART TOR" else "TOR BOOT",
+            badgeLabel = when (mode) {
+                TorConnectionMode.Smart -> "SMART TOR"
+                TorConnectionMode.Snowflake -> "SNOW TOR"
+                TorConnectionMode.Direct -> "TOR BOOT"
+            },
             buttonTopLine = "STARTING",
             buttonMainLine = "TOR",
             buttonBottomLine = mode.title.uppercase(),
-            statusLine = if (mode == TorConnectionMode.Smart) {
-                "VPN permission granted. Smart Connect is trying the best Tor path for this network."
-            } else {
-                "VPN permission granted. BabaG VPN is booting a direct Tor connection."
+            statusLine = when (mode) {
+                TorConnectionMode.Smart ->
+                    "Smart Connect is testing the best Tor path for this network."
+                TorConnectionMode.Snowflake ->
+                    "Snowflake mode is starting a bridge-based Tor path."
+                TorConnectionMode.Direct ->
+                    "Direct mode is starting a standard Tor path."
             },
             activityLine = "Bootstrap $progressLabel - $summaryLine",
-            detailLine = if (mode == TorConnectionMode.Smart) {
-                "Smart Connect starts with a normal Tor path and can promote itself to a Snowflake bridge if the direct route stalls."
-            } else {
-                "This is now beyond UI: the app is waiting for Tor to create live local listener ports before the device-wide packet bridge is allowed to come online."
+            detailLine = when (mode) {
+                TorConnectionMode.Smart ->
+                    "It starts direct first, then falls back to Snowflake if the route struggles."
+                TorConnectionMode.Snowflake ->
+                    "Snowflake is slower, but works better on restrictive networks."
+                TorConnectionMode.Direct ->
+                    "BabaG VPN is waiting for Tor to expose its local ports before the device tunnel can start."
             },
             circuitLabel = progressLabel,
             shieldLabel = mode.shieldLabel(),
-            routeLabel = if (mode == TorConnectionMode.Smart) "TRY DIRECT" else TorConnectionRoute.Direct.label
+            routeLabel = when (mode) {
+                TorConnectionMode.Smart -> "TRY DIRECT"
+                TorConnectionMode.Snowflake -> TorConnectionRoute.Snowflake.label
+                TorConnectionMode.Direct -> TorConnectionRoute.Direct.label
+            }
         )
     }
 
@@ -92,18 +110,24 @@ object BabaVpnController {
             buttonTopLine = "ARMING",
             buttonMainLine = "TUN",
             buttonBottomLine = route.label,
-            statusLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
-                "Smart Connect found a working Snowflake bridge. BabaG VPN is now creating the Android tunnel."
-            } else {
-                "Embedded Tor is online. BabaG VPN is now creating the Android tunnel and attaching the native Tor packet bridge."
+            statusLine = when {
+                mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake ->
+                    "Smart Connect found a working Snowflake bridge and is linking the Android tunnel."
+                mode == TorConnectionMode.Snowflake ->
+                    "Snowflake is online and BabaG VPN is linking the Android tunnel."
+                else ->
+                    "Tor is online and BabaG VPN is linking the Android tunnel."
             },
             activityLine = "SOCKS ${ports.socksPort}  HTTP ${ports.httpPort}  DNS ${ports.dnsPort}",
-            detailLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Direct) {
-                "Smart Connect kept the fast direct Tor path because the network looked healthy enough."
-            } else if (mode == TorConnectionMode.Smart) {
-                "Smart Connect switched away from the direct route and is finishing the tunnel over Snowflake."
-            } else {
-                "This handoff is where Android gives BabaG VPN the device-wide interface and the native tunnel process begins forwarding those packets into Tor instead of out to the normal network."
+            detailLine = when {
+                mode == TorConnectionMode.Smart && route == TorConnectionRoute.Direct ->
+                    "Smart Connect stayed on the faster direct route."
+                mode == TorConnectionMode.Smart ->
+                    "Smart Connect switched to Snowflake before bringing the tunnel fully online."
+                mode == TorConnectionMode.Snowflake ->
+                    "The bridge route stays active while Android hands over the VPN interface."
+                else ->
+                    "Android is handing BabaG VPN the device-wide tunnel so traffic can flow into Tor."
             },
             circuitLabel = "SOCKS ${ports.socksPort}",
             shieldLabel = mode.shieldLabel(),
@@ -129,18 +153,24 @@ object BabaVpnController {
             buttonTopLine = "STOP",
             buttonMainLine = "TOR",
             buttonBottomLine = route.label,
-            statusLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
-                "Smart Connect is online through a Snowflake bridge. New app traffic should now leave through Tor instead of your normal IP."
-            } else if (mode == TorConnectionMode.Smart) {
-                "Smart Connect is online on a direct Tor path. New app traffic should now leave through Tor instead of your normal IP."
-            } else {
-                "Full-device Tor VPN is online. New app traffic should now leave through the Tor network instead of your normal IP."
+            statusLine = when {
+                mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake ->
+                    "Smart Connect is live over a Snowflake bridge."
+                mode == TorConnectionMode.Smart ->
+                    "Smart Connect is live on the direct Tor path."
+                mode == TorConnectionMode.Snowflake ->
+                    "Snowflake mode is live over a Tor bridge."
+                else ->
+                    "Full-device Tor VPN is live."
             },
             activityLine = statsLine,
-            detailLine = if (mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake) {
-                "This route is slower but more censorship-resistant. Test it in Chrome with 'what's my IP' to confirm you're seeing a Tor exit IP."
-            } else {
-                "Test it in Chrome with 'what's my IP'. You should see a Tor exit IP, not your home or carrier address. Some apps that depend on raw UDP may still misbehave because Tor is fundamentally TCP-based."
+            detailLine = when {
+                mode == TorConnectionMode.Smart && route == TorConnectionRoute.Snowflake ->
+                    "Bridge mode is slower, but better on blocked networks. Check 'what's my IP' in Chrome."
+                mode == TorConnectionMode.Snowflake ->
+                    "Snowflake helps when normal Tor is blocked. Check 'what's my IP' in Chrome."
+                else ->
+                    "Check 'what's my IP' in Chrome. UDP-heavy apps may still misbehave because Tor is TCP-based."
             },
             circuitLabel = "SOCKS ${ports.socksPort}",
             shieldLabel = mode.shieldLabel(),
@@ -155,9 +185,9 @@ object BabaVpnController {
             buttonTopLine = "RETRY",
             buttonMainLine = "VPN",
             buttonBottomLine = "ACCESS NEEDED",
-            statusLine = "Android denied VPN control. Tap again and accept the permission dialog to continue.",
-            activityLine = "System VPN permission was rejected",
-            detailLine = "Without the Android VPN grant, no app can route device-wide traffic. Once you approve it, we can continue bootstrapping the full-device tunnel path.",
+            statusLine = "Android denied VPN control. Tap again and allow the VPN prompt.",
+            activityLine = "VPN permission rejected",
+            detailLine = "Without Android VPN access, BabaG VPN cannot route device traffic.",
             circuitLabel = "LOCKED",
             shieldLabel = "BLOCK",
             routeLabel = "WAITING"
@@ -172,8 +202,8 @@ object BabaVpnController {
             buttonMainLine = "VPN",
             buttonBottomLine = "CHECK LOGS",
             statusLine = message,
-            activityLine = "VPN bootstrap hit an exception",
-            detailLine = "The app caught a startup error before the tunnel could move forward. Tap again after the issue is fixed to retry the Android VPN bootstrap.",
+            activityLine = "VPN startup error",
+            detailLine = "The tunnel hit a startup problem. Fix it, then tap again to retry.",
             circuitLabel = "FAIL",
             shieldLabel = "ALERT",
             routeLabel = "ERROR"
@@ -190,9 +220,9 @@ object BabaVpnController {
         buttonTopLine = "ENABLE",
         buttonMainLine = "VPN",
         buttonBottomLine = "FULL DEVICE MODE",
-        statusLine = "Tap the core to let Android hand control of the device VPN tunnel to BabaG VPN.",
-        activityLine = "Waiting for Android VPN permission",
-        detailLine = "This path is the real Orbot-style route: Android grants a device-wide VPN, then the app boots a Tor daemon, then a packet bridge forwards all tunnel traffic into Tor.",
+        statusLine = "Tap the core to start the Android VPN tunnel.",
+        activityLine = "Waiting for VPN permission",
+        detailLine = "Android VPN + embedded Tor + a native packet bridge.",
         circuitLabel = "--",
         shieldLabel = "IDLE",
         routeLabel = "WAITING"
@@ -200,6 +230,7 @@ object BabaVpnController {
 
     private fun TorConnectionMode.shieldLabel(): String = when (this) {
         TorConnectionMode.Direct -> "DIRECT"
+        TorConnectionMode.Snowflake -> "SNOWFLAKE"
         TorConnectionMode.Smart -> "SMART"
     }
 }

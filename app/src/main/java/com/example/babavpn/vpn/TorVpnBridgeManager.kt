@@ -15,6 +15,7 @@ class TorVpnBridgeManager(
         require(ports.socksPort > 0) { "Tor did not expose a valid SOCKS port." }
 
         stop()
+        val selectedPackages = AppRoutingPreferences.selectedPackages(service)
 
         // This TUN becomes the device-wide default route. The native bridge then
         // reads packets from the file descriptor and forwards them into Tor.
@@ -33,9 +34,28 @@ class TorVpnBridgeManager(
             builder.allowFamily(OsConstants.AF_INET6)
         }
 
-        // Excluding our own package avoids the app tunneling its management
-        // traffic back into itself.
-        builder.addDisallowedApplication(service.packageName)
+        if (selectedPackages.isEmpty()) {
+            // Excluding our own package avoids the app tunneling its management
+            // traffic back into itself during full-device mode.
+            builder.addDisallowedApplication(service.packageName)
+        } else {
+            var appliedPackages = 0
+
+            selectedPackages.sorted().forEach { packageName ->
+                val added = runCatching {
+                    builder.addAllowedApplication(packageName)
+                }.isSuccess
+                if (added) {
+                    appliedPackages += 1
+                }
+            }
+
+            if (appliedPackages == 0) {
+                // If the saved list is stale, fall back to the old full-device
+                // behavior instead of creating a VPN profile that matches no apps.
+                builder.addDisallowedApplication(service.packageName)
+            }
+        }
 
         val establishedInterface = builder.establish()
             ?: throw IllegalStateException("Android did not establish the VPN tunnel.")

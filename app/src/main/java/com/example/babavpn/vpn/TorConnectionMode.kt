@@ -10,6 +10,11 @@ enum class TorConnectionMode(
         title = "Direct Connection",
         description = "Connects straight to Tor. Best if Tor is not blocked on this network."
     ),
+    Snowflake(
+        wireValue = "snowflake",
+        title = "Snowflake",
+        description = "Starts on a Snowflake bridge right away. Best when Tor is blocked, but usually slower."
+    ),
     Smart(
         wireValue = "smart",
         title = "Smart Connect",
